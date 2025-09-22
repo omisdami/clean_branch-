@@ -7,6 +7,7 @@ from fastapi import Form, HTTPException
 import httpx
 
 from api.endpoints import document
+from api.endpoints import rag
 
 app = FastAPI(title="AutoGen Document API")
 
@@ -24,6 +25,7 @@ app.add_middleware(
 
 # API routes
 app.include_router(document.router, prefix="/documents")
+app.include_router(rag.router, prefix="/rag")
 
 # HTML template setup
 templates = Jinja2Templates(directory="templates")

@@ -14,3 +14,10 @@ Pillow
 pdfplumber
 tqdm
 docx2pdf
+
+# RAG System Dependencies
+faiss-cpu
+rank-bm25
+tiktoken
+numpy
+scikit-learn
