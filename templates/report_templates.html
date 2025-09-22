@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+  <title> Kinectrics Report Generation</title>
+
+  <!-- Bootstrap CSS CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/css/style.css" />
+
+  <style>
+    .nav-link.active {
+      font-weight: bold;
+      border-bottom: 2px solid #0d6efd;
+    }
+    .template-column {
+      transition: transform 0.3s ease, box-shadow 0.3s ease, background-color 0.3s ease;
+      padding: 1.5rem;
+      border-radius: 12px;
+      background-color: #f8f9fa;
+      height: 100%;
+    }
+
+    .template-column:hover {
+      transform: translateY(-5px) scale(1.02);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      background-color: #e9f2ff;
+    }
+
+    .column-title {
+      font-size: 1.25rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+    }
+
+    .template-item {
+      margin-bottom: 0.75rem;
+      font-size: 0.95rem;
+      color: #333;
+    }
+  </style>
+</head>
+<body class="bg-light pt-5">
+
+    <!-- Navigation Bar -->
+  <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm fixed-top">
+    <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center gap-2 sora-font-nav" href="/">
+        <span class="material-symbols-outlined">description</span>
+        AI Document Generator by Kinectrics
+      </a>
+      <div class="collapse navbar-collapse">
+        <ul class="navbar-nav ms-auto sora-font-nav">
+          <li class="nav-item">
+            <a class="nav-link" id="newReportTab" href="/generate-report">Get Started</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" id="templatesTab" href="/report-templates">Report Templates</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+  <!-- END Navigation Bar -->
+
+  <div class="container-fluid py-5">
+    <h2 class="mb-4 text-center">Browse Report Templates</h2>
+
+    <div class="row g-4">
+      <!-- Most Recent -->
+      <div class="col-md-4">
+        <div class="template-column">
+          <div class="column-title">Most Recent</div>
+          <div class="template-item">Monthly Sales Report</div>
+          <div class="template-item">Customer Feedback Summary</div>
+          <div class="template-item">Inventory Update Log</div>
+        </div>
+      </div>
+
+      <!-- Suggested -->
+      <div class="col-md-4">
+        <div class="template-column">
+          <div class="column-title">Suggested</div>
+          <div class="template-item">Team Productivity Report</div>
+          <div class="template-item">Quarterly Review</div>
+          <div class="template-item">Risk Assessment Form</div>
+        </div>
+      </div>
+
+      <!-- Popular -->
+      <div class="col-md-4">
+        <div class="template-column">
+          <div class="column-title">Popular</div>
+          <div class="template-item">Annual Financial Overview</div>
+          <div class="template-item">Marketing Campaign Summary</div>
+          <div class="template-item">Employee Performance Report</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+  <title>Automated Document Preparation by Kinetrics</title>
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+
+<body>
+
+  <!-- Floating Background Shapes -->
+  <div class="floating-shape shape1"></div>
+  <div class="floating-shape shape2"></div>
+  <div class="floating-shape shape3"></div>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm fixed-top">
+    <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center gap-2 sora-font-nav" href="/">
+        <span class="material-symbols-outlined">description</span>
+        AI Document Generator by Kinectrics
+      </a>
+      <div class="collapse navbar-collapse">
+        <ul class="navbar-nav ms-auto sora-font-nav">
+          <li class="nav-item">
+            <a class="nav-link" id="newReportTab" href="/generate-report">Get Started</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" id="templatesTab" href="/report-templates">Report Templates</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+  <!-- END Navigation Bar -->
+
+  <!-- Hero Section -->
+  <div class="container-fluid text-center mt-5 fade-section sora-font" style="padding-top:100px;">
+    <h1 class="fw-bold" style="color:#0066ff;">Generate Reports Effortlessly</h1>
+    <p class="text-muted roboto-font">
+      Upload your reference, let AI analyze, and get a professional report in minutes.
+    </p>
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="container-fluid my-4 fade-section">
+    <div class="progress w-75 mx-auto shadow">
+      <div class="progress-bar progress-step" id="progressBar" style="width: 33%">
+        Step 1: Upload Reference Material/s (.DOCX/.PDF)
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="container-fluid my-5 fade-section">
+    <div class="row g-4">
+
+      <!-- Left: File Upload & Chat -->
+      <div class="col-md-8">
+        <div class="p-4 bg-white rounded shadow roboto-font">
+
+          <!-- File Upload -->
+          <h5 class="d-flex align-items-center gap-2">
+            <span class="material-symbols-outlined">upload_file</span>
+            Upload Document
+          </h5>
+
+          <div class="m-3 d-flex gap-2 align-items-center">
+            <select id="templateSelect" class="form-select w-auto" aria-label="Select report template">
+              <option value="">Choose Template</option>
+            </select>
+
+            <div class="flex-grow-1">
+              <input type="file" id="docFile" name="files" class="form-control py-1" multiple/>
+            </div>
+
+            <button onclick="uploadFile()" class="btn btn-primary px-3 py-1">Start Generating!</button>
+          </div>
+
+          <!-- Uploaded File Preview -->
+          <div id="filePreview" class="card d-none my-3">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <span id="fileName"></span>
+              <button class="btn btn-sm btn-outline-danger" onclick="removeFile()">Remove</button>
+            </div>
+          </div>
+
+          <!-- Chat Section -->
+          <div class="card mt-4 shadow-sm" id="chatSection" style="display:none;">
+            <div class="card-header bg-light d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined">smart_toy</span> AI-Generated Content
+            </div>
+            <div class="card-body" id="chatWindow">
+            </div>
+            <div class="card-footer d-flex">
+              <input type="text" id="userInput" class="form-control me-2" placeholder="Suggest a change..." />
+              <button onclick="sendQuestion()" class="btn btn-light sora-font-nav">Send</button>
+            </div>
+          </div>
+
+          <!-- Combined Row for Download + Feedback -->
+          <div class="d-flex justify-content-between align-items-start mt-4 gap-2">
+
+            <!-- Feedback Section -->
+            <div id="feedbackSection" class="d-none">
+              <div class="p-3 border rounded bg-light shadow-sm text-center">
+                <p class="mb-2 fw-semibold">How would you rate this report?</p>
+                <div class="star-rating d-flex justify-content-center gap-1 fs-4">
+                  <span onclick="submitRating(1)" class="star">★</span>
+                  <span onclick="submitRating(2)" class="star">★</span>
+                  <span onclick="submitRating(3)" class="star">★</span>
+                  <span onclick="submitRating(4)" class="star">★</span>
+                  <span onclick="submitRating(5)" class="star">★</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Download Links -->
+            <div id="downloadLinks" class="d-none">
+              <div class="p-3 border rounded bg-light shadow-sm text-center">
+                <p class="mb-2 fw-semibold">Download latest report</p>
+                <div class="d-flex justify-content-center gap-2 flex-wrap">
+                  <a id="docxLink" href="#" class="btn btn-outline-primary px-4 py-1" download>
+                    DOCX
+                  </a>
+                  <a id="pdfLink" href="#" class="btn btn-outline-primary px-4 py-1" download>
+                    PDF
+                  </a>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+
+          <!-- Hidden textarea -->
+          <textarea id="docContent" style="display:none;"></textarea>
+        </div>
+      </div>
+
+      <!-- Right: Instructions Panel -->
+      <div class="col-md-4 fade-section">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <h5 class="d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined">info</span> How It Works
+            </h5>
+            <ol class="mt-3">
+              <li>Upload your reference material.</li>
+              <li>Click the button to start generating your report.</li>
+              <li>Review the AI-generated report and make any corrections.</li>
+              <li>Download your report as a PDF, Word file, or both!</li>
+            </ol>
+            <p class="text-muted small">
+              For best results, upload your reference materials as .DOCX or .PDF files.
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="text-center mt-5 text-muted fade-section">
+    <hr />
+    <p>© 2025 Kinectrics Report Generator | Powered by AI</p>
+  </footer>
+
+  <!-- JS -->
+  <script src="/static/js/newReport.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</body>
+
+</html>

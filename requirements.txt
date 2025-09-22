@@ -1,0 +1,16 @@
+pyautogen
+ag2[openai]
+python-dotenv
+python-docx
+fpdf
+PyMuPDF
+python-multipart
+jinja2
+httpx
+fastapi
+uvicorn
+pytesseract
+Pillow
+pdfplumber
+tqdm
+docx2pdf
