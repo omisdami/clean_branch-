@@ -1,7 +1,7 @@
 # RAG System Implementation Guide
 
 ## Overview
-This guide provides comprehensive instructions for implementing and using the upgraded RAG (Retrieval-Augmented Generation) system. The system has been transformed from a simple document processing tool into a full-featured RAG pipeline with advanced retrieval, chunking, and generation capabilities.
+This guide provides comprehensive instructions for implementing and using the upgraded RAG (Retrieval-Augmented Generation) system. The system has been transformed from a simple document processing tool into a full-featured RAG pipeline with advanced retrieval, chunking, generation capabilities, and universal document structure support.
 
 ## System Architecture
 
@@ -9,6 +9,7 @@ This guide provides comprehensive instructions for implementing and using the up
 
 1. **Ingestion Pipeline** (`core/rag/ingestion/`)
    - Document extractors for PDF and DOCX files
+   - Dynamic heading detection for any document structure
    - Universal schema conversion
    - Table, image, and text extraction with OCR support
 
@@ -39,6 +40,12 @@ This guide provides comprehensive instructions for implementing and using the up
 ```bash
 # Install new dependencies
 pip install -r requirements.txt
+
+# For macOS users - install LibreOffice for PDF conversion (recommended)
+brew install --cask libreoffice
+
+# For Linux users
+sudo apt-get install libreoffice
 
 # Copy environment configuration
 cp .env.example .env
@@ -254,6 +261,38 @@ report = response.json()
 
 ## Advanced Features
 
+### Dynamic Heading Detection
+The system automatically detects headings in any document:
+
+```python
+from core.rag.ingestion.heading_extractor import HeadingExtractor
+
+extractor = HeadingExtractor()
+
+# Extract headings from DOCX
+from docx import Document
+doc = Document('document.docx')
+headings = extractor.extract_docx_headings(doc)
+
+# Extract headings from PDF
+headings = extractor.extract_pdf_headings('document.pdf')
+
+# Map to target sections
+target_sections = ['executive_summary', 'scope_of_work', 'risks']
+mapping = extractor.map_headings_to_sections(headings, target_sections)
+```
+
+### Cross-Platform PDF Conversion
+Check available conversion methods:
+
+```python
+from core.utils.pdf_converter import get_conversion_info
+
+info = get_conversion_info()
+print(f"Platform: {info['platform']}")
+print(f"Available converters: {info['available_converters']}")
+```
+
 ### Custom Extractors
 Add support for new document types:
 
@@ -323,6 +362,16 @@ python -m pytest tests/test_retrieval.py
 
 ### Common Issues
 
+1. **PDF Conversion Fails on macOS**
+   - Install LibreOffice: `brew install --cask libreoffice`
+   - Alternative: Install Pandoc: `brew install pandoc`
+   - System continues without PDF if conversion fails
+
+2. **Document Structure Not Recognized**
+   - System now detects headings dynamically
+   - Check detected headings in response: `doc_info['detected_headings']`
+   - Verify heading patterns match expected formats
+
 1. **Out of Memory Errors**
    - Reduce `MAX_CHUNK_TOKENS`
    - Process documents in smaller batches
@@ -353,12 +402,14 @@ curl "http://localhost:8000/rag/status"
 
 ## Migration from Legacy System
 
-The new RAG system maintains backward compatibility with existing endpoints while adding new capabilities:
+The enhanced RAG system maintains backward compatibility with existing endpoints while adding new capabilities:
 
 1. **Existing `/documents/process/` endpoint** - Still functional
 2. **New `/rag/ingest` endpoint** - Enhanced with RAG capabilities
+3. **Dynamic heading detection** - Works with any document structure
 3. **Document templates** - Can be converted to RAG queries
 4. **Generated reports** - Now include citations and confidence scores
+5. **Cross-platform support** - Reliable PDF conversion on all platforms
 
 ## Security Considerations
 

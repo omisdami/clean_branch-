@@ -7,10 +7,10 @@ from core.workflows.document_extraction import extract_structured_data
 from core.workflows.document_drafting import generate_batch_draft_texts
 from core.utils.file_utils import write_to_docx, save_report
 from core.utils.text_utils import normalize_title_for_lookup
+from core.utils.file_utils import safe_docx_to_pdf_conversion
 import os
 from typing import Tuple, Dict
 from datetime import datetime
-from docx2pdf import convert
 
 ## Report Generation
 def generate_report(sections: dict, extracted_text: dict[str, str], filename: str) -> Tuple[dict, str]:
@@ -196,7 +196,11 @@ def save_all_report_formats(aggregated_report: dict, full_report_text: str, file
     # Save the DOCX version of the report
     write_to_docx(aggregated_report, filename=docx_path)
 
-    convert(docx_path, pdf_path)
+    # Use safe PDF conversion
+    pdf_success = safe_docx_to_pdf_conversion(docx_path, pdf_path)
+    if not pdf_success:
+        print(f"Warning: PDF conversion failed. DOCX available at {docx_path}")
+        # Return path anyway - frontend can handle missing PDF
 
     return {
         "json_path": json_path,

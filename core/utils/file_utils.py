@@ -8,6 +8,7 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.oxml.ns import qn
 from io import BytesIO
 from fpdf import FPDF
+from core.utils.pdf_converter import convert_docx_to_pdf
 
 def generate_json_filename(base="extracted_report", extension="json"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -189,3 +190,16 @@ def write_to_docx(section_outputs, filename="output.docx", mode="draft"):
             write_section(doc, title, content, mode, level=1)
 
     doc.save(filename)
+
+def safe_docx_to_pdf_conversion(docx_path: str, pdf_path: str) -> bool:
+    """
+    Safely convert DOCX to PDF with cross-platform support.
+    
+    Args:
+        docx_path: Path to DOCX file
+        pdf_path: Path for output PDF
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    return convert_docx_to_pdf(docx_path, pdf_path)

@@ -21,3 +21,6 @@ rank-bm25
 tiktoken
 numpy
 scikit-learn
+
+# Cross-platform PDF conversion
+pywin32; sys_platform == "win32"

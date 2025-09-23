@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from typing import List, Dict
 from core.utils.file_utils import write_to_docx
-from docx2pdf import convert
+from core.utils.file_utils import safe_docx_to_pdf_conversion
 
 def build_revision_prompt(document: str, question: str) -> str:
     """
@@ -76,7 +76,10 @@ def save_updated_outputs(content: str) -> dict:
     write_to_docx(section_outputs, filename=docx_path, mode="final")
     print(f"[DEBUG] DOCX saved to: {docx_path}")
 
-    convert(docx_path, pdf_path)
+    # Use safe PDF conversion
+    pdf_success = safe_docx_to_pdf_conversion(docx_path, pdf_path)
+    if not pdf_success:
+        print(f"Warning: PDF conversion failed for {docx_path}")
 
     return {
         "docx_path": docx_path,

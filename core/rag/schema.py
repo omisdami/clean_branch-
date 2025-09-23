@@ -22,6 +22,15 @@ class DocumentSection(BaseModel):
     level: int = 1
     parent_section_id: Optional[str] = None
 
+class DetectedHeading(BaseModel):
+    """Detected heading schema"""
+    heading: str
+    level: int
+    content: str
+    page_start: int
+    page_end: int
+    section_id: str
+
 class DocumentFact(BaseModel):
     """Document fact schema"""
     fact_id: str
@@ -89,6 +98,7 @@ class DocumentSchema(BaseModel):
     """Complete document schema"""
     metadata: DocumentMetadata
     sections: List[DocumentSection] = []
+    detected_headings: List[DetectedHeading] = []
     facts: List[DocumentFact] = []
     risks: List[DocumentRisk] = []
     lists: List[DocumentList] = []

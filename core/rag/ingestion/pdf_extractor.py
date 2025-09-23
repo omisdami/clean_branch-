@@ -7,6 +7,7 @@ from PIL import Image
 import pytesseract
 import io
 
+from core.rag.ingestion.heading_extractor import HeadingExtractor
 from core.rag.schema import (
     DocumentSchema, DocumentMetadata, DocumentSection, 
     DocumentTable, DocumentFigure, DocumentImage
@@ -15,6 +16,9 @@ from core.rag.ingestion.base_extractor import BaseExtractor
 
 class PdfExtractor(BaseExtractor):
     """PDF document extractor"""
+    
+    def __init__(self):
+        self.heading_extractor = HeadingExtractor()
     
     def extract(self, file_path: str) -> DocumentSchema:
         """Extract content from PDF file"""
@@ -26,59 +30,31 @@ class PdfExtractor(BaseExtractor):
         # Extract metadata
         metadata = self._extract_metadata(pdf_doc, file_path, doc_id)
         
-        # Extract content
+        # Extract headings dynamically
+        detected_headings = self.heading_extractor.extract_pdf_headings(file_path)
+        
+        # Convert to DocumentSection objects
         sections = []
+        for heading_data in detected_headings:
+            section = DocumentSection(
+                section_id=heading_data['section_id'],
+                title=heading_data['heading'],
+                content=heading_data['content'],
+                page_start=heading_data['page_start'],
+                page_end=heading_data['page_end'],
+                level=heading_data['level']
+            )
+            sections.append(section)
+        
+        # Extract tables, figures, and images
         tables = []
         figures = []
         images = []
-        
-        current_section = None
-        section_counter = 0
-        
+
         # Process each page
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
-            
-            # Extract text
-            text = page.get_text()
-            
-            # Simple section detection based on font size/style
-            blocks = page.get_text("dict")["blocks"]
-            
-            for block in blocks:
-                if "lines" in block:
-                    for line in block["lines"]:
-                        for span in line["spans"]:
-                            text_content = span["text"].strip()
-                            font_size = span["size"]
-                            
-                            # Heuristic: larger font = heading
-                            if font_size > 14 and len(text_content) < 100:
-                                if current_section:
-                                    sections.append(current_section)
-                                
-                                section_counter += 1
-                                current_section = DocumentSection(
-                                    section_id=f"section_{section_counter}",
-                                    title=text_content,
-                                    content="",
-                                    page_start=page_num + 1,
-                                    page_end=page_num + 1
-                                )
-                            else:
-                                if current_section:
-                                    current_section.content += text_content + " "
-                                    current_section.page_end = page_num + 1
-                                else:
-                                    # Create default section
-                                    current_section = DocumentSection(
-                                        section_id="section_1",
-                                        title="Document Content",
-                                        content=text_content + " ",
-                                        page_start=page_num + 1,
-                                        page_end=page_num + 1
-                                    )
-            
+
             # Extract tables using pdfplumber
             page_tables = self._extract_tables_from_page(file_path, page_num)
             tables.extend(page_tables)
@@ -86,10 +62,6 @@ class PdfExtractor(BaseExtractor):
             # Extract images
             page_images = self._extract_images_from_page(page, page_num, doc_id)
             images.extend(page_images)
-        
-        # Add final section
-        if current_section:
-            sections.append(current_section)
         
         pdf_doc.close()
         
