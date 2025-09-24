@@ -1,33 +1,9 @@
-import re
-from typing import List, Dict, Any, Tuple
-from docx import Document
-from docx.shared import Pt
-import fitz  # PyMuPDF
-
-class HeadingExtractor:
-    """Extract headings dynamically from documents"""
-    
-    def __init__(self):
-        # Common heading patterns
-        self.numbered_patterns = [
-            r'^\d+\.\s+',           # 1. 2. 3.
-            r'^\d+\.\d+\s+',        # 1.1 1.2 2.1
-            r'^\d+\.\d+\.\d+\s+',   # 1.1.1 1.1.2
-            r'^[A-Z]\.\s+',         # A. B. C.
-            r'^[IVX]+\.\s+',        # I. II. III.
-            r'^\([a-z]\)\s+',       # (a) (b) (c)
-            r'^\(\d+\)\s+',         # (1) (2) (3)
-        ]
-        
-        # Common heading keywords that indicate sections
-        self.heading_keywords = [
-            'introduction', 'overview', 'summary', 'background', 'purpose',
-            'scope', 'objectives', 'methodology', 'approach', 'findings',
-            'results', 'analysis', 'discussion', 'conclusion', 'recommendations',
-            'risks', 'mitigation', 'timeline', 'budget', 'resources',
-            'deliverables', 'assumptions', 'constraints', 'appendix'
-        ]
-    
+from core.config.llm_config import get_llm_config
+from core.agents.extractor_agent import get_extractor_agent
+from core.agents.drafting_agent import get_drafting_agent
+from core.agents.user_proxy_agent import get_user_proxy_agent
+from core.utils.text_utils import get_company_name
+from core.workflows.document_extraction import extract_structured_data
     def extract_sections(self, file_path: str) -> Dict[str, str]:
         """
         Extract sections from document with heading as key and content as value.
@@ -251,288 +227,206 @@ class HeadingExtractor:
                 "format": "Well-structured paragraphs that clearly convey the main points and important details"
             }
     
-    def extract_docx_headings(self, doc: Document) -> List[Dict[str, Any]]:
-        """Extract headings from DOCX document"""
-        headings = []
-        current_content = ""
-        current_heading = None
-        section_counter = 0
-        
-        for paragraph in doc.paragraphs:
-            # Check if paragraph is a heading based on style
-            if self._is_docx_heading(paragraph):
-                # Save previous section if exists
-                if current_heading:
-                    headings.append({
-                        'heading': current_heading['text'],
-                        'level': current_heading['level'],
-                        'content': current_content.strip(),
-                        'page_start': 1,  # DOCX doesn't have clear page breaks
-                        'page_end': 1,
-                        'section_id': f"sec_{section_counter:03d}"
-                    })
-                    section_counter += 1
-                
-                # Start new section
-                level = self._get_docx_heading_level(paragraph)
-                current_heading = {
-                    'text': paragraph.text.strip(),
-                    'level': level
+from core.workflows.document_drafting import generate_batch_draft_texts
+from core.utils.file_utils import write_to_docx, save_report
+from core.utils.text_utils import normalize_title_for_lookup
+from core.utils.file_utils import safe_docx_to_pdf_conversion
+import os
+from typing import Tuple, Dict
+from datetime import datetime
+
+## Report Generation
+def generate_report(sections: dict, extracted_text: dict[str, str], filename: str) -> Tuple[dict, str]:
+    """
+    Generates a structured and complete draft report based on extracted document text and section instructions.
+
+    Args:
+        sections (dict): Report structure including section/subsection titles and instructions.
+        extracted_text (dict[str, str] | str): Cleaned text content extracted from uploaded document(s).
+        filename (str): Name of the original file (can be used for reference or logging).
+
+    Returns:
+        Tuple[dict, str]: 
+            - A structured dictionary representing the drafted report content section-by-section.
+            - The full report as a concatenated string, ready for export or formatting.
+    """
+
+    # Load model configuration and initialize AutoGen agents
+    llm_config = get_llm_config()
+    extractor_agent = get_extractor_agent(llm_config)
+    section_writer_agent = get_drafting_agent(llm_config)
+    user_proxy = get_user_proxy_agent(llm_config)
+
+    # --- Step 1: Per-file structured data extraction ---
+    structured_cache = {}
+    for file_name, text in extracted_text.items():
+        # Extract for all sections, but limited to those referencing this file
+        file_specific_sections = {}
+        for key, sec in sections.items():
+            if sec.get("source") == file_name:
+                file_specific_sections[key] = sec
+            elif "subsections" in sec:
+                filtered_subs = {
+                    sub_key: sub
+                    for sub_key, sub in sec["subsections"].items()
+                    if sub.get("source") == file_name
                 }
-                current_content = ""
-            else:
-                # Add to current section content
-                if paragraph.text.strip():
-                    current_content += paragraph.text + "\n"
-        
-        # Add final section
-        if current_heading:
-            headings.append({
-                'heading': current_heading['text'],
-                'level': current_heading['level'],
-                'content': current_content.strip(),
-                'page_start': 1,
-                'page_end': 1,
-                'section_id': f"sec_{section_counter:03d}"
-            })
-        
-        # If no headings found, create a default section
-        if not headings and current_content.strip():
-            headings.append({
-                'heading': 'Document Content',
-                'level': 1,
-                'content': current_content.strip(),
-                'page_start': 1,
-                'page_end': 1,
-                'section_id': 'sec_001'
-            })
-        
-        return headings
-    
-    def extract_pdf_headings(self, pdf_path: str) -> List[Dict[str, Any]]:
-        """Extract headings from PDF document"""
-        doc = fitz.open(pdf_path)
-        headings = []
-        current_content = ""
-        current_heading = None
-        section_counter = 0
-        
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            blocks = page.get_text("dict")["blocks"]
-            
-            for block in blocks:
-                if "lines" in block:
-                    for line in block["lines"]:
-                        for span in line["spans"]:
-                            text = span["text"].strip()
-                            if not text:
-                                continue
-                            
-                            # Check if this looks like a heading
-                            if self._is_pdf_heading(span, text):
-                                # Save previous section
-                                if current_heading:
-                                    headings.append({
-                                        'heading': current_heading['text'],
-                                        'level': current_heading['level'],
-                                        'content': current_content.strip(),
-                                        'page_start': current_heading['page_start'],
-                                        'page_end': page_num + 1,
-                                        'section_id': f"sec_{section_counter:03d}"
-                                    })
-                                    section_counter += 1
-                                
-                                # Start new section
-                                level = self._get_pdf_heading_level(span, text)
-                                current_heading = {
-                                    'text': text,
-                                    'level': level,
-                                    'page_start': page_num + 1
-                                }
-                                current_content = ""
-                            else:
-                                # Add to current section content
-                                current_content += text + " "
-        
-        # Add final section
-        if current_heading:
-            headings.append({
-                'heading': current_heading['text'],
-                'level': current_heading['level'],
-                'content': current_content.strip(),
-                'page_start': current_heading['page_start'],
-                'page_end': len(doc),
-                'section_id': f"sec_{section_counter:03d}"
-            })
-        
-        # If no headings found, create a default section
-        if not headings and current_content.strip():
-            headings.append({
-                'heading': 'Document Content',
-                'level': 1,
-                'content': current_content.strip(),
-                'page_start': 1,
-                'page_end': len(doc),
-                'section_id': 'sec_001'
-            })
-        
-        doc.close()
-        return headings
-    
-    def _is_docx_heading(self, paragraph) -> bool:
-        """Check if DOCX paragraph is a heading"""
-        # Check style name
-        if paragraph.style.name.startswith('Heading'):
-            return True
-        
-        # Check if text matches heading patterns
-        text = paragraph.text.strip()
-        if not text:
-            return False
-        
-        # Check numbered patterns
-        for pattern in self.numbered_patterns:
-            if re.match(pattern, text):
-                return True
-        
-        # Check if it's short and contains heading keywords
-        if len(text) < 100 and any(keyword in text.lower() for keyword in self.heading_keywords):
-            return True
-        
-        # Check formatting (bold, larger font)
-        if paragraph.runs:
-            first_run = paragraph.runs[0]
-            if first_run.bold and len(text) < 100:
-                return True
-        
-        return False
-    
-    def _is_pdf_heading(self, span: Dict, text: str) -> bool:
-        """Check if PDF span is a heading"""
-        if not text or len(text) > 200:
-            return False
-        
-        font_size = span.get("size", 12)
-        font_flags = span.get("flags", 0)
-        
-        # Check if font is larger than normal (assuming 12pt is normal)
-        if font_size > 14:
-            return True
-        
-        # Check if text is bold (font flags & 16 = bold)
-        if font_flags & 16 and len(text) < 100:
-            return True
-        
-        # Check numbered patterns
-        for pattern in self.numbered_patterns:
-            if re.match(pattern, text):
-                return True
-        
-        # Check heading keywords
-        if any(keyword in text.lower() for keyword in self.heading_keywords):
-            return True
-        
-        return False
-    
-    def _get_docx_heading_level(self, paragraph) -> int:
-        """Get heading level from DOCX paragraph"""
-        style_name = paragraph.style.name
-        
-        # Extract level from style name
-        if 'Heading' in style_name:
-            match = re.search(r'Heading (\d+)', style_name)
-            if match:
-                return int(match.group(1))
-        
-        # Determine level from text pattern
-        text = paragraph.text.strip()
-        
-        # Level 1: Simple numbers (1., 2., 3.)
-        if re.match(r'^\d+\.\s+', text):
-            return 1
-        
-        # Level 2: Decimal numbers (1.1, 1.2)
-        if re.match(r'^\d+\.\d+\s+', text):
-            return 2
-        
-        # Level 3: Triple decimal (1.1.1)
-        if re.match(r'^\d+\.\d+\.\d+\s+', text):
-            return 3
-        
-        return 1
-    
-    def _get_pdf_heading_level(self, span: Dict, text: str) -> int:
-        """Get heading level from PDF span"""
-        font_size = span.get("size", 12)
-        
-        # Determine level based on font size
-        if font_size >= 18:
-            return 1
-        elif font_size >= 16:
-            return 2
-        elif font_size >= 14:
-            return 3
-        
-        # Determine level from text pattern
-        if re.match(r'^\d+\.\s+', text):
-            return 1
-        elif re.match(r'^\d+\.\d+\s+', text):
-            return 2
-        elif re.match(r'^\d+\.\d+\.\d+\s+', text):
-            return 3
-        
-        return 1
-    
-    def map_headings_to_sections(self, headings: List[Dict], target_sections: List[str]) -> Dict[str, Dict]:
-        """Map detected headings to target report sections"""
-        mapping = {}
-        
-        # Create mapping rules
-        section_mappings = {
-            'executive_summary': ['executive summary', 'summary', 'overview', 'introduction'],
-            'value_proposition': ['value proposition', 'benefits', 'advantages', 'value'],
-            'scope_of_work': ['scope', 'work scope', 'project scope', 'deliverables'],
-            'methodology': ['methodology', 'approach', 'method', 'process'],
-            'risks': ['risks', 'risk assessment', 'challenges', 'issues'],
-            'recommendations': ['recommendations', 'next steps', 'action items', 'conclusion']
-        }
-        
-        for target_section in target_sections:
-            best_match = None
-            best_score = 0
-            
-            # Look for exact or close matches
-            for heading in headings:
-                heading_text = heading['heading'].lower()
+                if filtered_subs:
+                    file_specific_sections[key] = {
+                        **sec,
+                        "subsections": filtered_subs
+                    }
+
+        if file_specific_sections:
+            print(f"[Extraction] Extracting structured data for file: {file_name}")
+            print(file_specific_sections)
+            structured_cache[file_name] = extract_structured_data(text, file_specific_sections, extractor_agent, user_proxy)
+        else:
+            print(f"[Extraction] No sections reference file: {file_name}. Skipping extraction.")
+
+    # --- Step 2: Merge cache for company name detection ---
+    merged_structured_data = {}
+    for cache in structured_cache.values():
+        for section_title, content in cache.items():
+            merged_structured_data.setdefault(section_title, {}).update(content)
+
+    company_name = get_company_name(merged_structured_data)
+    if company_name and "why_company_a" in sections:
+        sections["why_company_a"]["title"] = f"Why {company_name}"
+
+    # --- Step 3: Prepare draft inputs ---
+    draft_inputs = []
+    key_mapping = {}
+
+    # Build the input list for each section/subsection for batch drafting
+    for section_key, section_data in sections.items():
+        # Handle sections WITH subsections
+        if "subsections" in section_data:
+            for sub_key, sub_data in section_data["subsections"].items():
+
+                display_title = sub_data["title"]
+                lookup_title = normalize_title_for_lookup(display_title)
+
+                # Choose source and fallback
+                source_file = sub_data.get("source", section_data.get("source"))
+                relevant_data = {}
+                if source_file and source_file in structured_cache:
+                    relevant_data = structured_cache[source_file].get(lookup_title, {})
+                    print(f"[Subsection] Using cached extraction for '{display_title}' "
+                            f"(lookup='{lookup_title}') from file '{source_file}'.")
+                else:
+                    relevant_data = merged_structured_data.get(lookup_title, {})
+                    print(f"[Subsection] Using MERGED fallback for '{display_title}' "
+                            f"(lookup='{lookup_title}').")
                 
-                # Check if target section has mapping rules
-                if target_section in section_mappings:
-                    keywords = section_mappings[target_section]
-                    for keyword in keywords:
-                        if keyword in heading_text:
-                            score = len(keyword) / len(heading_text)
-                            if score > best_score:
-                                best_match = heading
-                                best_score = score
-                
-                # Direct match check
-                if target_section.replace('_', ' ') in heading_text:
-                    best_match = heading
-                    break
+                if not relevant_data:
+                    print(f"[Subsection] No extracted content found for '{display_title}'.")
+
+                draft_inputs.append({
+                    "title": display_title,
+                    "instructions": sub_data["instructions"],
+                    "relevant_data": relevant_data
+                })
+                key_mapping[display_title] = (section_key, sub_key)
+        
+        # Handle top-level sections WITHOUT subsections
+        else:
+            display_title = section_data["title"]
+            lookup_title = normalize_title_for_lookup(display_title)
             
-            if best_match:
-                mapping[target_section] = best_match
+            source_file = section_data.get("source")
+            if source_file and source_file in structured_cache:
+                relevant_data = structured_cache[source_file].get(lookup_title, {})
+                print(f"[Section] Using cached extraction for '{display_title}' "
+                        f"(lookup='{lookup_title}') from file '{source_file}'.")
             else:
-                # Fallback: use all content for summarization
-                all_content = "\n\n".join([h['content'] for h in headings])
-                mapping[target_section] = {
-                    'heading': f"Summarized {target_section.replace('_', ' ').title()}",
-                    'level': 1,
-                    'content': all_content,
-                    'page_start': 1,
-                    'page_end': headings[-1]['page_end'] if headings else 1,
-                    'section_id': f"summarized_{target_section}"
+                relevant_data = merged_structured_data.get(lookup_title, {})
+                print(f"[Section] Using MERGED fallback for '{display_title}' "
+                    f"(lookup='{lookup_title}').")
+
+            if not relevant_data:
+                print(f"[Section] No extracted content found for '{display_title}'.")
+
+            draft_inputs.append({
+                "title": display_title,
+                "instructions": section_data["instructions"],
+                "relevant_data": relevant_data
+            })
+            key_mapping[display_title] = (section_key, None)
+
+    # --- Step 4: Drafting phase ---
+    drafted_outputs = generate_batch_draft_texts(draft_inputs, section_writer_agent, user_proxy)
+
+    aggregated_report = {} # Final structured report dictionary
+    full_report_text = "" # Full report as plain concatenated text
+
+    # --- Step 5: Reconstruct report structure ---
+    for draft in drafted_outputs:
+        title = draft["title"]
+        content = draft["content"]
+        section_key, sub_key = key_mapping[title]
+
+        if sub_key is not None:
+            if section_key not in aggregated_report:
+                aggregated_report[section_key] = {
+                    "title": sections[section_key]["title"],
+                    "subsections": {}
                 }
-        
-        return mapping
+            aggregated_report[section_key]["subsections"][sub_key] = {
+                "title": title,
+                "content": content
+            }
+        else:
+            aggregated_report[section_key] = {
+                "title": title,
+                "content": content
+            }
+
+        full_report_text += content + "\n\n"
+
+    return aggregated_report, full_report_text
+
+def save_all_report_formats(aggregated_report: dict, full_report_text: str, filename: str) -> Dict[str, str]:
+    """
+    Saves the complete report into three formats: JSON, DOCX, and PDF.
+
+    Args:
+        aggregated_report (dict): Final structured report sections, ready for export.
+        full_report_text (str): Flattened or full-body string version of the report used for PDF.
+        filename (str): Original filename (used for naming output files).
+
+    Returns:
+        Dict[str, str]: A dictionary containing file paths for the saved JSON, DOCX, and PDF versions.
+    """
+
+    output_dir = "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+   
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Save as JSON using a custom report-saving utility
+    json_path = save_report({
+        "agent": "extractor_agent",
+        "timestamp": datetime.now().isoformat(),
+        "source_file": filename,
+        "report_sections": aggregated_report
+    })
+
+    # Define paths for DOCX and PDF outputs
+    docx_path = os.path.join(output_dir, f"docx_report_{timestamp}.docx")
+    pdf_path = os.path.join(output_dir, f"pdf_report_{timestamp}.pdf")
+
+    # Save the DOCX version of the report
+    write_to_docx(aggregated_report, filename=docx_path)
+
+    # Use safe PDF conversion
+    pdf_success = safe_docx_to_pdf_conversion(docx_path, pdf_path)
+    if not pdf_success:
+        print(f"Warning: PDF conversion failed. DOCX available at {docx_path}")
+        # Return path anyway - frontend can handle missing PDF
+
+    return {
+        "json_path": json_path,
+        "docx_path": docx_path,
+        "pdf_path": pdf_path
+    }
