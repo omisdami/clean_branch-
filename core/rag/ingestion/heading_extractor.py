@@ -1,37 +1,79 @@
-from core.config.llm_config import get_llm_config
-from core.agents.extractor_agent import get_extractor_agent
-from core.agents.drafting_agent import get_drafting_agent
-from core.agents.user_proxy_agent import get_user_proxy_agent
-from core.utils.text_utils import get_company_name
-from core.workflows.document_extraction import extract_structured_data
-    def extract_sections(self, file_path: str) -> Dict[str, str]:
-        """
-        Extract sections from document with heading as key and content as value.
-        This is the main method for dynamic document processing.
-        
-        Args:
-            file_path: Path to document file
-            
-        Returns:
-            Dict mapping section headings to their content
-        """
-        _, ext = os.path.splitext(file_path)
-        ext = ext.lower()
-        
-        if ext == '.docx':
-            return self._extract_docx_sections(file_path)
-        elif ext == '.pdf':
-            return self._extract_pdf_sections(file_path)
-        else:
-            # Fallback: treat as plain text
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                return {"Document Content": content}
-            except:
-                return {"Document Content": "Unable to extract content"}
+import os
+import json
+import shutil
+import tempfile
+from typing import Dict, Any
+from fastapi import UploadFile
+from core.utils.text_utils import clean_extracted_text
+from core.utils.text_extractor import extract_text
+from core.rag.ingestion.heading_extractor import HeadingExtractor
+from core.rag.ingestion.heading_extractor import HeadingExtractor
+
+def generate_dynamic_report_structure(file_path: str) -> dict:
+    """
+    Generate report structure dynamically from document headings.
+    Replaces static template loading.
     
-    def _extract_docx_sections(self, file_path: str) -> Dict[str, str]:
+    Args:
+        file_path: Path to the document file
+        
+    Returns:
+        Dynamic schema dict compatible with existing pipeline
+    """
+    heading_extractor = HeadingExtractor()
+    
+    # Extract sections from document
+    sections = heading_extractor.extract_sections(file_path)
+    
+    if not sections:
+        # Fallback: create a single section with full document content
+        try:
+            full_text = extract_and_clean_text(file_path)
+            sections = {"Document Analysis": full_text}
+        except Exception as e:
+            print(f"Error extracting text: {e}")
+            sections = {"Document Analysis": "Unable to extract document content"}
+    
+    # Generate schema from sections
+    schema = heading_extractor.generate_section_schema(sections)
+    
+    print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
+    
+    return schema
+
+def generate_dynamic_report_structure(file_path: str) -> dict:
+    """
+    Generate report structure dynamically from document headings.
+    Replaces static template loading.
+    
+    Args:
+        file_path: Path to the document file
+        
+    Returns:
+        Dynamic schema dict compatible with existing pipeline
+    """
+    heading_extractor = HeadingExtractor()
+    
+    # Extract sections from document
+    sections = heading_extractor.extract_sections(file_path)
+    
+    if not sections:
+        # Fallback: create a single section with full document content
+        try:
+            full_text = extract_and_clean_text(file_path)
+            sections = {"Document Analysis": full_text}
+        except Exception as e:
+            print(f"Error extracting text: {e}")
+            sections = {"Document Analysis": "Unable to extract document content"}
+    
+    # Generate schema from sections
+    schema = heading_extractor.generate_section_schema(sections)
+    
+    print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
+    
+    return schema
+
+## File & Input Utilities
         """Extract sections from DOCX file"""
         try:
             from docx import Document
@@ -140,6 +182,60 @@ from core.workflows.document_extraction import extract_structured_data
             print(f"Error extracting PDF sections: {e}")
             return {"Document Content": "Error extracting content"}
     
+    def _is_docx_heading(self, paragraph) -> bool:
+        """Check if DOCX paragraph is a heading"""
+        # Check if it's a built-in heading style
+        if paragraph.style.name.startswith('Heading'):
+            return True
+        
+        # Check if it's bold and short (likely a heading)
+        if paragraph.runs:
+            first_run = paragraph.runs[0]
+            text = paragraph.text.strip()
+            if (first_run.bold and 
+                len(text) < 100 and 
+                not text.endswith('.') and
+                len(text.split()) <= 10):
+                return True
+        
+        # Check for numbering patterns
+        text = paragraph.text.strip()
+        if re.match(r'^\d+\.?\s+[A-Z]', text):  # "1. Title" or "1 Title"
+            return True
+        if re.match(r'^\d+\.\d+\.?\s+[A-Z]', text):  # "1.1 Title"
+            return True
+        if re.match(r'^[A-Z]\.?\s+[A-Z]', text):  # "A. Title"
+            return True
+        
+        return False
+    
+    def _is_pdf_heading(self, span: dict, text: str) -> bool:
+        """Check if PDF span is a heading"""
+        # Check font size (headings are usually larger)
+        font_size = span.get('size', 12)
+        if font_size > 14:
+            return True
+        
+        # Check if bold and short
+        font_flags = span.get('flags', 0)
+        is_bold = bool(font_flags & 2**4)  # Bold flag
+        
+        if (is_bold and 
+            len(text) < 100 and 
+            not text.endswith('.') and
+            len(text.split()) <= 10):
+            return True
+        
+        # Check for numbering patterns
+        if re.match(r'^\d+\.?\s+[A-Z]', text):  # "1. Title"
+            return True
+        if re.match(r'^\d+\.\d+\.?\s+[A-Z]', text):  # "1.1 Title"
+            return True
+        if re.match(r'^[A-Z]\.?\s+[A-Z]', text):  # "A. Title"
+            return True
+        
+        return False
+    
     def generate_section_schema(self, sections: Dict[str, str]) -> Dict[str, Any]:
         """
         Generate a dynamic schema from extracted sections.
@@ -226,207 +322,207 @@ from core.workflows.document_extraction import extract_structured_data
                 "length": "2-3 paragraphs, 150-250 words",
                 "format": "Well-structured paragraphs that clearly convey the main points and important details"
             }
+def save_uploaded_file(file: UploadFile) -> str:
+    """
+    Saves the uploaded file to a temporary file path and returns the path.
+
+    Args:
+        file (UploadFile): The file uploaded via FastAPI endpoint.
+
+    Returns:
+        str: Path to the saved temporary file.
+
+    Raises:
+        ValueError: If the file type is not supported (PDF or DOCX).
+    """
+    _, ext = os.path.splitext(file.filename)
+    if ext.lower() not in [".pdf", ".docx"]:
+        raise ValueError("Unsupported file type")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+        shutil.copyfileobj(file.file, tmp_file)
+        return tmp_file.name
+
+def extract_and_clean_text(file_path: str) -> str:
+    """
+    Extracts raw text from a PDF or DOCX file and cleans it.
+
+    1. Detects file type (PDF or DOCX).
+    2. Extracts text, with OCR fallback for image-only PDFs.
+    3. Cleans and normalizes the extracted text for further processing.
+
+    Args:
+        file_path (str): Path to the input document.
+
+    Returns:
+        str: Cleaned text extracted from the file.
+    """
+    raw_text = extract_text(file_path)
+
+    if not raw_text.strip():
+        # Return placeholder or raise warning if extraction fails
+        return "[No extractable text found in the document.]"
+
+    return clean_extracted_text(raw_text)
+
+def load_report_structure(json_path: str) -> dict:
+    """
+    Loads the JSON-based report structure used for guiding extraction.
+
+    Args:
+        json_path (str): Path to the JSON template file.
+
+    Returns:
+        dict: Dictionary representation of the JSON structure.
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+## Extraction Phase
+def extract_structured_data_dynamic(extracted_text: str, detected_headings: list, target_sections: list, extractor_agent, user_proxy):
+    """
+    Uses an extractor agent to map detected headings to target sections dynamically.
     
-from core.workflows.document_drafting import generate_batch_draft_texts
-from core.utils.file_utils import write_to_docx, save_report
-from core.utils.text_utils import normalize_title_for_lookup
-from core.utils.file_utils import safe_docx_to_pdf_conversion
-import os
-from typing import Tuple, Dict
-from datetime import datetime
-
-## Report Generation
-def generate_report(sections: dict, extracted_text: dict[str, str], filename: str) -> Tuple[dict, str]:
-    """
-    Generates a structured and complete draft report based on extracted document text and section instructions.
-
     Args:
-        sections (dict): Report structure including section/subsection titles and instructions.
-        extracted_text (dict[str, str] | str): Cleaned text content extracted from uploaded document(s).
-        filename (str): Name of the original file (can be used for reference or logging).
+        extracted_text (str): Cleaned raw text from the document.
+        detected_headings (list): List of detected headings from document.
+        target_sections (list): List of target section names for report.
+        extractor_agent: AutoGen extractor agent responsible for parsing.
+        user_proxy: Proxy agent to handle chat.
 
     Returns:
-        Tuple[dict, str]: 
-            - A structured dictionary representing the drafted report content section-by-section.
-            - The full report as a concatenated string, ready for export or formatting.
+        dict: Dictionary mapping target sections to best matching content.
     """
+    if not detected_headings or not target_sections:
+        return {}
 
-    # Load model configuration and initialize AutoGen agents
-    llm_config = get_llm_config()
-    extractor_agent = get_extractor_agent(llm_config)
-    section_writer_agent = get_drafting_agent(llm_config)
-    user_proxy = get_user_proxy_agent(llm_config)
-
-    # --- Step 1: Per-file structured data extraction ---
-    structured_cache = {}
-    for file_name, text in extracted_text.items():
-        # Extract for all sections, but limited to those referencing this file
-        file_specific_sections = {}
-        for key, sec in sections.items():
-            if sec.get("source") == file_name:
-                file_specific_sections[key] = sec
-            elif "subsections" in sec:
-                filtered_subs = {
-                    sub_key: sub
-                    for sub_key, sub in sec["subsections"].items()
-                    if sub.get("source") == file_name
-                }
-                if filtered_subs:
-                    file_specific_sections[key] = {
-                        **sec,
-                        "subsections": filtered_subs
-                    }
-
-        if file_specific_sections:
-            print(f"[Extraction] Extracting structured data for file: {file_name}")
-            print(file_specific_sections)
-            structured_cache[file_name] = extract_structured_data(text, file_specific_sections, extractor_agent, user_proxy)
-        else:
-            print(f"[Extraction] No sections reference file: {file_name}. Skipping extraction.")
-
-    # --- Step 2: Merge cache for company name detection ---
-    merged_structured_data = {}
-    for cache in structured_cache.values():
-        for section_title, content in cache.items():
-            merged_structured_data.setdefault(section_title, {}).update(content)
-
-    company_name = get_company_name(merged_structured_data)
-    if company_name and "why_company_a" in sections:
-        sections["why_company_a"]["title"] = f"Why {company_name}"
-
-    # --- Step 3: Prepare draft inputs ---
-    draft_inputs = []
-    key_mapping = {}
-
-    # Build the input list for each section/subsection for batch drafting
-    for section_key, section_data in sections.items():
-        # Handle sections WITH subsections
-        if "subsections" in section_data:
-            for sub_key, sub_data in section_data["subsections"].items():
-
-                display_title = sub_data["title"]
-                lookup_title = normalize_title_for_lookup(display_title)
-
-                # Choose source and fallback
-                source_file = sub_data.get("source", section_data.get("source"))
-                relevant_data = {}
-                if source_file and source_file in structured_cache:
-                    relevant_data = structured_cache[source_file].get(lookup_title, {})
-                    print(f"[Subsection] Using cached extraction for '{display_title}' "
-                            f"(lookup='{lookup_title}') from file '{source_file}'.")
-                else:
-                    relevant_data = merged_structured_data.get(lookup_title, {})
-                    print(f"[Subsection] Using MERGED fallback for '{display_title}' "
-                            f"(lookup='{lookup_title}').")
-                
-                if not relevant_data:
-                    print(f"[Subsection] No extracted content found for '{display_title}'.")
-
-                draft_inputs.append({
-                    "title": display_title,
-                    "instructions": sub_data["instructions"],
-                    "relevant_data": relevant_data
-                })
-                key_mapping[display_title] = (section_key, sub_key)
-        
-        # Handle top-level sections WITHOUT subsections
-        else:
-            display_title = section_data["title"]
-            lookup_title = normalize_title_for_lookup(display_title)
+    # Create mapping using heading extractor
+    heading_extractor = HeadingExtractor()
+    section_mapping = heading_extractor.map_headings_to_sections(detected_headings, target_sections)
+    
+    # Prepare content for each target section
+    structured_data = {}
+    
+    for target_section in target_sections:
+        if target_section in section_mapping:
+            mapped_heading = section_mapping[target_section]
+            content = mapped_heading['content']
             
-            source_file = section_data.get("source")
-            if source_file and source_file in structured_cache:
-                relevant_data = structured_cache[source_file].get(lookup_title, {})
-                print(f"[Section] Using cached extraction for '{display_title}' "
-                        f"(lookup='{lookup_title}') from file '{source_file}'.")
-            else:
-                relevant_data = merged_structured_data.get(lookup_title, {})
-                print(f"[Section] Using MERGED fallback for '{display_title}' "
-                    f"(lookup='{lookup_title}').")
+            # Use extractor agent to structure the content
+            extraction_prompt = f"""
+            You are extracting structured information for the section: "{target_section.replace('_', ' ').title()}"
+            
+            From the detected heading: "{mapped_heading['heading']}"
+            
+            Content:
+            {content}
+            
+            Extract key facts and structure them as:
+            {{
+                "Company Name": "Value if found",
+                "Key Fact 1": "Value",
+                "Key Fact 2": "Value",
+                ...
+            }}
+            
+            Only include facts present in the content. End with TERMINATE.
+            """
+            
+            chat = user_proxy.initiate_chat(
+                extractor_agent,
+                message={"content": extraction_prompt},
+                human_input_mode="NEVER"
+            )
+            
+            # Extract response
+            final_texts = [
+                msg["content"].strip()
+                for msg in chat.chat_history
+                if msg.get("name") == "extractor_agent" and msg["content"].strip() != "TERMINATE"
+            ]
+            
+            if final_texts:
+                try:
+                    from ast import literal_eval
+                    cleaned_output = final_texts[-1].split("TERMINATE")[0].strip()
+                    section_data = literal_eval(cleaned_output)
+                    structured_data[target_section.replace('_', ' ').title()] = section_data
+                except Exception as e:
+                    print(f"Error parsing data for {target_section}: {e}")
+                    structured_data[target_section.replace('_', ' ').title()] = {"content": content}
+    
+    return structured_data
 
-            if not relevant_data:
-                print(f"[Section] No extracted content found for '{display_title}'.")
-
-            draft_inputs.append({
-                "title": display_title,
-                "instructions": section_data["instructions"],
-                "relevant_data": relevant_data
-            })
-            key_mapping[display_title] = (section_key, None)
-
-    # --- Step 4: Drafting phase ---
-    drafted_outputs = generate_batch_draft_texts(draft_inputs, section_writer_agent, user_proxy)
-
-    aggregated_report = {} # Final structured report dictionary
-    full_report_text = "" # Full report as plain concatenated text
-
-    # --- Step 5: Reconstruct report structure ---
-    for draft in drafted_outputs:
-        title = draft["title"]
-        content = draft["content"]
-        section_key, sub_key = key_mapping[title]
-
-        if sub_key is not None:
-            if section_key not in aggregated_report:
-                aggregated_report[section_key] = {
-                    "title": sections[section_key]["title"],
-                    "subsections": {}
-                }
-            aggregated_report[section_key]["subsections"][sub_key] = {
-                "title": title,
-                "content": content
-            }
+def extract_structured_data(extracted_text: str, sections: dict, extractor_agent, user_proxy, section_filter: list[str] = None):
+    """
+    Legacy function - maintained for backward compatibility.
+    Uses an extractor agent to map extracted text into structured section-wise data.
+    """
+    section_titles = []
+    for key, section in sections.items():
+        if "subsections" in section:
+            for _, sub in section["subsections"].items():
+                if not section_filter or sub["title"] in section_filter:
+                    section_titles.append(sub["title"])
         else:
-            aggregated_report[section_key] = {
-                "title": title,
-                "content": content
-            }
+            if not section_filter or section["title"] in section_filter:
+                section_titles.append(section["title"])
 
-        full_report_text += content + "\n\n"
+    if not section_titles:
+        return {}
 
-    return aggregated_report, full_report_text
+    section_list = "\n".join([f"- {title}" for title in section_titles])
 
-def save_all_report_formats(aggregated_report: dict, full_report_text: str, filename: str) -> Dict[str, str]:
+    extraction_prompt = f"""
+        You are a skilled **Document Extractor Agent**.
+
+        You are provided with a document and a list of section titles.
+
+        Your task is to extract relevant information from the document and organize it by section title, following these rules:
+
+        1. Always provide a dictionary for **every section title**, even if the document does not have a literal matching heading.
+        2. If the section does not explicitly exist in the document, **infer its content** using the most relevant facts that fulfill its intent.  
+        - Example: "Why Company A" can be inferred from company overview, differentiators, proven impact, or any content that explains why the company is a strong partner.
+        3. Structure the output as JSON-style, like:
+            {{
+                "Section Title 1": {{
+                    "Company Name": "Value",
+                    "Key Fact": "Value",
+                    ...
+                }},
+                ...
+            }}
+        4. Always include `"Company Name"` in every section.
+        5. Only include facts from the document (no outside knowledge).
+        6. End your message with **TERMINATE**.
+
+        Section Titles:
+        {section_list}
+
+        --- START DOCUMENT ---
+        {extracted_text}
+        --- END DOCUMENT ---
     """
-    Saves the complete report into three formats: JSON, DOCX, and PDF.
 
-    Args:
-        aggregated_report (dict): Final structured report sections, ready for export.
-        full_report_text (str): Flattened or full-body string version of the report used for PDF.
-        filename (str): Original filename (used for naming output files).
+    chat = user_proxy.initiate_chat(
+        extractor_agent,
+        message={"content": extraction_prompt},
+        human_input_mode="NEVER"
+    )
 
-    Returns:
-        Dict[str, str]: A dictionary containing file paths for the saved JSON, DOCX, and PDF versions.
-    """
+    final_texts = [
+        msg["content"].strip()
+        for msg in chat.chat_history
+        if msg.get("name") == "extractor_agent" and msg["content"].strip() != "TERMINATE"
+    ]
+    final_output = final_texts[-1] if final_texts else "{}"
+    
+    try:
+        from ast import literal_eval
+        cleaned_output = final_output.split("TERMINATE")[0].strip()
+        structured_data = literal_eval(cleaned_output)
+    except Exception as e:
+        structured_data = {}
+        print("Error parsing extracted data:", e)
 
-    output_dir = "outputs"
-    os.makedirs(output_dir, exist_ok=True)
-   
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Save as JSON using a custom report-saving utility
-    json_path = save_report({
-        "agent": "extractor_agent",
-        "timestamp": datetime.now().isoformat(),
-        "source_file": filename,
-        "report_sections": aggregated_report
-    })
-
-    # Define paths for DOCX and PDF outputs
-    docx_path = os.path.join(output_dir, f"docx_report_{timestamp}.docx")
-    pdf_path = os.path.join(output_dir, f"pdf_report_{timestamp}.pdf")
-
-    # Save the DOCX version of the report
-    write_to_docx(aggregated_report, filename=docx_path)
-
-    # Use safe PDF conversion
-    pdf_success = safe_docx_to_pdf_conversion(docx_path, pdf_path)
-    if not pdf_success:
-        print(f"Warning: PDF conversion failed. DOCX available at {docx_path}")
-        # Return path anyway - frontend can handle missing PDF
-
-    return {
-        "json_path": json_path,
-        "docx_path": docx_path,
-        "pdf_path": pdf_path
-    }
+    return structured_data
