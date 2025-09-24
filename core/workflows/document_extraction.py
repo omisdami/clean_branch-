@@ -8,6 +8,37 @@ from core.utils.text_utils import clean_extracted_text
 from core.utils.text_extractor import extract_text
 from core.rag.ingestion.heading_extractor import HeadingExtractor
 
+def generate_dynamic_report_structure(file_path: str) -> dict:
+    """
+    Generate report structure dynamically from document headings.
+    Replaces static template loading.
+    
+    Args:
+        file_path: Path to the document file
+        
+    Returns:
+        Dynamic schema dict compatible with existing pipeline
+    """
+    heading_extractor = HeadingExtractor()
+    
+    # Extract sections from document
+    sections = heading_extractor.extract_sections(file_path)
+    
+    if not sections:
+        # Fallback: create a single section with full document content
+        try:
+            full_text = extract_and_clean_text(file_path)
+            sections = {"Document Analysis": full_text}
+        except Exception as e:
+            print(f"Error extracting text: {e}")
+            sections = {"Document Analysis": "Unable to extract document content"}
+    
+    # Generate schema from sections
+    schema = heading_extractor.generate_section_schema(sections)
+    
+    print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
+    
+    return schema
 ## File & Input Utilities
 def save_uploaded_file(file: UploadFile) -> str:
     """

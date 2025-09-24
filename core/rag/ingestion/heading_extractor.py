@@ -28,6 +28,229 @@ class HeadingExtractor:
             'deliverables', 'assumptions', 'constraints', 'appendix'
         ]
     
+    def extract_sections(self, file_path: str) -> Dict[str, str]:
+        """
+        Extract sections from document with heading as key and content as value.
+        This is the main method for dynamic document processing.
+        
+        Args:
+            file_path: Path to document file
+            
+        Returns:
+            Dict mapping section headings to their content
+        """
+        _, ext = os.path.splitext(file_path)
+        ext = ext.lower()
+        
+        if ext == '.docx':
+            return self._extract_docx_sections(file_path)
+        elif ext == '.pdf':
+            return self._extract_pdf_sections(file_path)
+        else:
+            # Fallback: treat as plain text
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return {"Document Content": content}
+            except:
+                return {"Document Content": "Unable to extract content"}
+    
+    def _extract_docx_sections(self, file_path: str) -> Dict[str, str]:
+        """Extract sections from DOCX file"""
+        try:
+            from docx import Document
+            doc = Document(file_path)
+            
+            sections = {}
+            current_heading = None
+            current_content = []
+            
+            for paragraph in doc.paragraphs:
+                text = paragraph.text.strip()
+                if not text:
+                    continue
+                
+                # Check if this paragraph is a heading
+                if self._is_docx_heading(paragraph):
+                    # Save previous section if exists
+                    if current_heading and current_content:
+                        sections[current_heading] = '\n'.join(current_content).strip()
+                    
+                    # Start new section
+                    current_heading = text
+                    current_content = []
+                else:
+                    # Add to current section content
+                    if current_heading:
+                        current_content.append(text)
+                    else:
+                        # Content before first heading
+                        if "Introduction" not in sections:
+                            sections["Introduction"] = ""
+                        sections["Introduction"] += text + "\n"
+            
+            # Save final section
+            if current_heading and current_content:
+                sections[current_heading] = '\n'.join(current_content).strip()
+            
+            # Fallback if no sections found
+            if not sections:
+                full_text = '\n'.join([p.text for p in doc.paragraphs if p.text.strip()])
+                sections["Document Content"] = full_text
+            
+            return sections
+            
+        except Exception as e:
+            print(f"Error extracting DOCX sections: {e}")
+            return {"Document Content": "Error extracting content"}
+    
+    def _extract_pdf_sections(self, file_path: str) -> Dict[str, str]:
+        """Extract sections from PDF file"""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(file_path)
+            
+            sections = {}
+            current_heading = None
+            current_content = []
+            
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                blocks = page.get_text("dict")["blocks"]
+                
+                for block in blocks:
+                    if "lines" in block:
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                text = span["text"].strip()
+                                if not text:
+                                    continue
+                                
+                                # Check if this looks like a heading
+                                if self._is_pdf_heading(span, text):
+                                    # Save previous section
+                                    if current_heading and current_content:
+                                        sections[current_heading] = ' '.join(current_content).strip()
+                                    
+                                    # Start new section
+                                    current_heading = text
+                                    current_content = []
+                                else:
+                                    # Add to current section content
+                                    if current_heading:
+                                        current_content.append(text)
+                                    else:
+                                        # Content before first heading
+                                        if "Introduction" not in sections:
+                                            sections["Introduction"] = ""
+                                        sections["Introduction"] += text + " "
+            
+            # Save final section
+            if current_heading and current_content:
+                sections[current_heading] = ' '.join(current_content).strip()
+            
+            # Fallback if no sections found
+            if not sections:
+                full_text = ""
+                for page_num in range(len(doc)):
+                    page = doc[page_num]
+                    full_text += page.get_text() + "\n"
+                sections["Document Content"] = full_text.strip()
+            
+            doc.close()
+            return sections
+            
+        except Exception as e:
+            print(f"Error extracting PDF sections: {e}")
+            return {"Document Content": "Error extracting content"}
+    
+    def generate_section_schema(self, sections: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Generate a dynamic schema from extracted sections.
+        Each section gets default instructions for processing.
+        
+        Args:
+            sections: Dict of section_name -> content
+            
+        Returns:
+            Schema dict compatible with existing pipeline
+        """
+        schema = {}
+        
+        for section_name, content in sections.items():
+            # Clean section name for use as key
+            section_key = section_name.lower().replace(' ', '_').replace('.', '').replace(':', '')
+            
+            # Determine appropriate instructions based on section name
+            instructions = self._get_section_instructions(section_name)
+            
+            schema[section_key] = {
+                "title": section_name,
+                "source": "dynamic",  # Indicates this was auto-detected
+                "instructions": instructions,
+                "content": ""  # Will be filled by drafting agent
+            }
+        
+        return schema
+    
+    def _get_section_instructions(self, section_name: str) -> Dict[str, str]:
+        """Get appropriate instructions based on section name"""
+        section_lower = section_name.lower()
+        
+        # Executive summary type sections
+        if any(word in section_lower for word in ['summary', 'executive', 'overview', 'introduction']):
+            return {
+                "objective": "Provide a clear and concise summary of this section, highlighting the key points and main ideas.",
+                "tone": "Professional and informative",
+                "length": "2-3 paragraphs, 150-200 words",
+                "format": "Paragraph form with clear, flowing sentences"
+            }
+        
+        # Scope/methodology sections
+        elif any(word in section_lower for word in ['scope', 'methodology', 'approach', 'method']):
+            return {
+                "objective": "Clearly outline the scope, methodology, or approach described in this section with specific details and steps.",
+                "tone": "Technical and precise",
+                "length": "2-4 paragraphs, 200-300 words",
+                "format": "Structured paragraphs with numbered or bulleted sub-points where appropriate"
+            }
+        
+        # Risk/challenge sections
+        elif any(word in section_lower for word in ['risk', 'challenge', 'issue', 'problem']):
+            return {
+                "objective": "Identify and explain the risks, challenges, or issues presented, along with any mitigation strategies mentioned.",
+                "tone": "Analytical and solution-focused",
+                "length": "2-3 paragraphs, 150-250 words",
+                "format": "Clear identification of issues followed by proposed solutions or mitigations"
+            }
+        
+        # Findings/results sections
+        elif any(word in section_lower for word in ['finding', 'result', 'conclusion', 'outcome']):
+            return {
+                "objective": "Present the key findings, results, or conclusions from this section with supporting details and evidence.",
+                "tone": "Factual and evidence-based",
+                "length": "2-4 paragraphs, 200-300 words",
+                "format": "Structured presentation of findings with supporting data or examples"
+            }
+        
+        # Recommendation sections
+        elif any(word in section_lower for word in ['recommendation', 'suggestion', 'next steps', 'action']):
+            return {
+                "objective": "Clearly present the recommendations, suggestions, or next steps outlined in this section.",
+                "tone": "Actionable and directive",
+                "length": "2-3 paragraphs, 150-250 words",
+                "format": "Clear, actionable recommendations with rationale and expected outcomes"
+            }
+        
+        # Default instructions for any other section
+        else:
+            return {
+                "objective": f"Summarize and present the key information from the '{section_name}' section in a clear and organized manner.",
+                "tone": "Professional and informative",
+                "length": "2-3 paragraphs, 150-250 words",
+                "format": "Well-structured paragraphs that clearly convey the main points and important details"
+            }
+    
     def extract_docx_headings(self, doc: Document) -> List[Dict[str, Any]]:
         """Extract headings from DOCX document"""
         headings = []
