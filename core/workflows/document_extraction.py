@@ -39,6 +39,7 @@ def generate_dynamic_report_structure(file_path: str) -> dict:
     print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
     
     return schema
+
 ## File & Input Utilities
 def save_uploaded_file(file: UploadFile) -> str:
     """
@@ -185,6 +186,12 @@ def extract_structured_data(extracted_text: str, sections: dict, extractor_agent
         else:
             if not section_filter or section["title"] in section_filter:
                 section_titles.append(section["title"])
+
+    if not section_titles:
+        return {}
+
+    section_list = "\n".join([f"- {title}" for title in section_titles])
+
     extraction_prompt = f"""
         You are a skilled **Document Extractor Agent**.
 
@@ -238,8 +245,3 @@ def extract_structured_data(extracted_text: str, sections: dict, extractor_agent
         print("Error parsing extracted data:", e)
 
     return structured_data
-
-    if not section_titles:
-        return {}
-
-    section_list = "\n".join([f"- {title}" for title in section_titles])
