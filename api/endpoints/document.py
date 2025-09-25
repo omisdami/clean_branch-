@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from core.config.llm_config import get_llm_config
 from core.workflows.document_pipeline import generate_report, save_all_report_formats
 from core.workflows.document_extraction import save_uploaded_file, extract_and_clean_text, load_report_structure
+from core.workflows.document_extraction import generate_dynamic_report_structure
 from core.workflows.document_drafting import flatten_report_sections
 from core.workflows.document_editor import extract_editor_response, save_updated_outputs, build_revision_prompt
 from core.agents.editor_agent import get_editor_agent
@@ -69,7 +70,7 @@ async def list_templates():
 
 @router.post("/process/")
 async def process_document(files: List[UploadFile] = File(...),
-    template_name: str = Form("proposal_template.json")):
+    template_name: str = Form(None)):
     """
         Accepts multiple PDF or DOCX files, extracts their content,
         generates a structured report using AutoGen agents, and returns
@@ -77,35 +78,51 @@ async def process_document(files: List[UploadFile] = File(...),
 
         Args:
             files (List[UploadFile]): Uploaded files to process.
+            template_name (str, optional): Template to use. If None, uses dynamic detection.
 
         Returns:
             JSONResponse: Includes message, structured report, flattened version, and paths to saved outputs.
     """
-    template_dir = "templates"
-    try:
-        template_files = os.listdir(template_dir)
-        json_files = [f for f in template_files if f.endswith(".json")]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list templates: {str(e)}")
+    
+    use_dynamic = template_name is None
+    
+    if not use_dynamic:
+        # Validate template if provided
+        template_dir = "templates"
+        try:
+            template_files = os.listdir(template_dir)
+            json_files = [f for f in template_files if f.endswith(".json")]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list templates: {str(e)}")
 
-    if template_name not in json_files:
-        raise HTTPException(status_code=400, detail="Invalid template name")
+        if template_name not in json_files:
+            raise HTTPException(status_code=400, detail="Invalid template name")
 
     # 1. Save all uploaded files and extract their text
     extracted_texts = {}
+    file_paths = {}
     for file in files:
         file_path = save_uploaded_file(file)
+        file_paths[file.filename] = file_path
         text = extract_and_clean_text(file_path)
         extracted_texts[file.filename] = text
 
-    # 3. Load JSON-based report structure template
-    sections = load_report_structure(f"templates/{template_name}")
+    # 3. Load report structure (template or dynamic)
+    if use_dynamic:
+        print("[Dynamic Mode] Generating report structure from document headings")
+        # Use the first file for dynamic structure generation
+        first_file_path = next(iter(file_paths.values()))
+        sections = generate_dynamic_report_structure(first_file_path)
+    else:
+        print(f"[Template Mode] Using template: {template_name}")
+        sections = load_report_structure(f"templates/{template_name}")
 
     # 4. Run the AutoGen agents to generate content per section
     aggregated_report, full_report_text = generate_report(
         sections,
         extracted_texts,
-        "multiple_files_combined.docx"
+        "multiple_files_combined.docx",
+        use_dynamic=use_dynamic
     )
 
     document_id = str(uuid.uuid4())
@@ -123,6 +140,8 @@ async def process_document(files: List[UploadFile] = File(...),
     return JSONResponse(content={
         "message": "Full report successfully generated",
         "uuid": document_id,
+        "mode": "dynamic" if use_dynamic else "template",
+        "template_used": template_name if not use_dynamic else "auto-detected",
         "report_sections": aggregated_report,
         "flattened_sections": flattened,
         **output_paths

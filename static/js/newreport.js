@@ -228,8 +228,11 @@ async function uploadFile() {
       formData.append("files", file);
     }
 
-    // Append template_name to formData
-    formData.append("template_name", selectedTemplate);
+    // Append template_name to formData only if one is selected
+    if (selectedTemplate && selectedTemplate !== "") {
+      formData.append("template_name", selectedTemplate);
+    }
+    // If no template selected, the system will use dynamic detection
 
     const res = await fetch("/documents/process/", {
       method: "POST",
@@ -244,6 +247,13 @@ async function uploadFile() {
 
     const result = await res.json();
     console.log("Upload API response:", result);
+
+    // Show mode information
+    if (result.mode === "dynamic") {
+      console.log("Used dynamic heading detection");
+    } else {
+      console.log(`Used template: ${result.template_used}`);
+    }
 
     currentDocumentUUID = result.uuid || null;
 

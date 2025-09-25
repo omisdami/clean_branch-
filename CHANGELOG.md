@@ -89,6 +89,90 @@ This document tracks all changes made during the upgrade from a basic document p
 - **Before**: Required manual template creation for each document type
 - **After**: Works with any document structure out of the box
 
+### 🆕 Dynamic Heading Detection System (Latest Update)
+
+#### Problem Solved:
+- **Before**: System failed when documents didn't contain predefined headings like "Executive Summary" or "Scope of Work"
+- **After**: Dynamically detects ALL headings in any document and maps them intelligently to report sections
+
+#### New Components Added:
+
+##### Heading Extraction Engine
+- **Added**: `core/rag/ingestion/heading_extractor.py`
+- **Features**:
+  - Detects headings using document structure (DOCX styles, PDF font sizes)
+  - Recognizes numbering patterns (1., 1.1, A., I., etc.)
+  - Identifies heading keywords and formatting cues
+  - Assigns hierarchical levels (H1, H2, H3)
+- **Benefits**: Works with ANY document structure, not just predefined templates
+
+##### Intelligent Section Mapping
+- **Feature**: `map_headings_to_sections()` method
+- **Capability**: Maps detected headings to target report sections using:
+  - Semantic similarity matching
+  - Keyword-based mapping rules
+  - Fallback summarization for unmatched sections
+- **Benefits**: Always generates complete reports even with unusual document structures
+
+##### Enhanced Schema Support
+- **Added**: `detected_headings` field to document schema
+- **Added**: `DetectedHeading` Pydantic model
+- **Purpose**: Stores all discovered headings with metadata
+- **Benefits**: Full document structure preservation and traceability
+
+#### Cross-Platform PDF Conversion Fix
+
+##### Problem Solved:
+- **Before**: `docx2pdf` crashed on macOS with `SystemExit(1)` when Microsoft Word wasn't available
+- **After**: Robust cross-platform PDF conversion with multiple fallback methods
+
+##### New PDF Conversion System
+- **Added**: `core/utils/pdf_converter.py`
+- **Features**:
+  - **macOS**: LibreOffice → Pandoc → textutil fallbacks
+  - **Linux**: LibreOffice with clear installation guidance
+  - **Windows**: LibreOffice → COM automation fallbacks
+  - Graceful failure handling (continues without PDF if conversion fails)
+- **Benefits**: 
+  - No more system crashes
+  - Works in containerized environments
+  - Clear error messages and installation guidance
+
+#### Updated Extraction Pipeline
+- **Enhanced**: `DocxExtractor` and `PdfExtractor` now use dynamic heading detection
+- **Removed**: Hardcoded heading assumptions
+- **Added**: Comprehensive heading analysis with font size, style, and pattern recognition
+- **Benefits**: Handles documents with any heading structure
+
+#### Backward Compatibility
+- **Maintained**: All existing endpoints continue to work
+- **Added**: New `extract_structured_data_dynamic()` function alongside legacy version
+- **Enhanced**: Template-based reports now use dynamic mapping as fallback
+- **Benefits**: Smooth migration path for existing users
+
+#### Testing Infrastructure
+- **Added**: `tests/test_heading_extraction.py`
+- **Coverage**: 
+  - DOCX heading detection with various styles
+  - PDF heading detection with font-based analysis
+  - Section mapping algorithms
+  - Fallback behavior testing
+- **Benefits**: Ensures reliability across document types
+
+#### Performance Improvements
+- **Faster Processing**: Single-pass heading detection during extraction
+- **Memory Efficient**: Streaming document analysis
+- **Reduced Dependencies**: Eliminated problematic `docx2pdf` dependency
+- **Better Error Handling**: Graceful degradation instead of crashes
+
+#### Real-World Impact
+- **Before**: System failed with documents using headings like "Project Background" instead of "Executive Summary"
+- **After**: Automatically detects "Project Background" and maps it to Executive Summary section
+- **Before**: Crashed on macOS without Microsoft Word
+- **After**: Uses multiple conversion methods, continues operation even if PDF conversion fails
+- **Before**: Required manual template creation for each document type
+- **After**: Works with any document structure out of the box
+
 ### 1. Core Architecture Transformation
 
 #### Before:

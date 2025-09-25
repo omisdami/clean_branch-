@@ -1,82 +1,175 @@
+import re
 import os
-import json
-import shutil
-import tempfile
-from typing import Dict, Any
-from fastapi import UploadFile
-from core.utils.text_utils import clean_extracted_text
-from core.utils.text_extractor import extract_text
-from core.rag.ingestion.heading_extractor import HeadingExtractor
-from core.rag.ingestion.heading_extractor import HeadingExtractor
+from typing import Dict, List, Any, Optional
+from docx import Document
+import fitz  # PyMuPDF
 
-def generate_dynamic_report_structure(file_path: str) -> dict:
-    """
-    Generate report structure dynamically from document headings.
-    Replaces static template loading.
+class HeadingExtractor:
+    """Extract headings dynamically from documents"""
     
-    Args:
-        file_path: Path to the document file
+    def __init__(self):
+        self.heading_keywords = [
+            'summary', 'introduction', 'overview', 'background', 'scope', 'methodology',
+            'findings', 'results', 'conclusion', 'recommendation', 'risk', 'mitigation',
+            'objective', 'goal', 'purpose', 'approach', 'analysis', 'assessment'
+        ]
+    
+    def extract_sections(self, file_path: str) -> Dict[str, str]:
+        """
+        Extract sections from document based on detected headings.
         
-    Returns:
-        Dynamic schema dict compatible with existing pipeline
-    """
-    heading_extractor = HeadingExtractor()
-    
-    # Extract sections from document
-    sections = heading_extractor.extract_sections(file_path)
-    
-    if not sections:
-        # Fallback: create a single section with full document content
-        try:
-            full_text = extract_and_clean_text(file_path)
-            sections = {"Document Analysis": full_text}
-        except Exception as e:
-            print(f"Error extracting text: {e}")
-            sections = {"Document Analysis": "Unable to extract document content"}
-    
-    # Generate schema from sections
-    schema = heading_extractor.generate_section_schema(sections)
-    
-    print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
-    
-    return schema
-
-def generate_dynamic_report_structure(file_path: str) -> dict:
-    """
-    Generate report structure dynamically from document headings.
-    Replaces static template loading.
-    
-    Args:
-        file_path: Path to the document file
+        Args:
+            file_path: Path to document file
+            
+        Returns:
+            Dict mapping section names to their content
+        """
+        file_ext = os.path.splitext(file_path)[1].lower()
         
-    Returns:
-        Dynamic schema dict compatible with existing pipeline
-    """
-    heading_extractor = HeadingExtractor()
+        if file_ext == '.docx':
+            return self._extract_docx_sections(file_path)
+        elif file_ext == '.pdf':
+            return self._extract_pdf_sections(file_path)
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
     
-    # Extract sections from document
-    sections = heading_extractor.extract_sections(file_path)
+    def extract_docx_headings(self, doc: Document) -> List[Dict[str, Any]]:
+        """Extract headings from DOCX document"""
+        headings = []
+        current_section = None
+        current_content = []
+        section_counter = 1
+        
+        for paragraph in doc.paragraphs:
+            text = paragraph.text.strip()
+            if not text:
+                continue
+            
+            # Check if this paragraph is a heading
+            if self._is_docx_heading(paragraph):
+                # Save previous section if exists
+                if current_section and current_content:
+                    headings.append({
+                        'section_id': f'sec_{section_counter:03d}',
+                        'heading': current_section,
+                        'content': '\n'.join(current_content).strip(),
+                        'level': self._get_docx_heading_level(paragraph),
+                        'page_start': 1,  # DOCX doesn't have clear page concept
+                        'page_end': 1
+                    })
+                    section_counter += 1
+                
+                # Start new section
+                current_section = text
+                current_content = []
+            else:
+                # Add to current section content
+                if current_section:
+                    current_content.append(text)
+                else:
+                    # Content before first heading - create introduction
+                    if not headings or headings[0]['heading'] != 'Introduction':
+                        headings.insert(0, {
+                            'section_id': 'sec_000',
+                            'heading': 'Introduction',
+                            'content': text,
+                            'level': 1,
+                            'page_start': 1,
+                            'page_end': 1
+                        })
+                    else:
+                        headings[0]['content'] += '\n' + text
+        
+        # Save final section
+        if current_section and current_content:
+            headings.append({
+                'section_id': f'sec_{section_counter:03d}',
+                'heading': current_section,
+                'content': '\n'.join(current_content).strip(),
+                'level': self._get_docx_heading_level(paragraph),
+                'page_start': 1,
+                'page_end': 1
+            })
+        
+        return headings
     
-    if not sections:
-        # Fallback: create a single section with full document content
+    def extract_pdf_headings(self, file_path: str) -> List[Dict[str, Any]]:
+        """Extract headings from PDF document"""
         try:
-            full_text = extract_and_clean_text(file_path)
-            sections = {"Document Analysis": full_text}
+            doc = fitz.open(file_path)
+            headings = []
+            current_section = None
+            current_content = []
+            section_counter = 1
+            
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                blocks = page.get_text("dict")["blocks"]
+                
+                for block in blocks:
+                    if "lines" in block:
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                text = span["text"].strip()
+                                if not text:
+                                    continue
+                                
+                                # Check if this looks like a heading
+                                if self._is_pdf_heading(span, text):
+                                    # Save previous section
+                                    if current_section and current_content:
+                                        headings.append({
+                                            'section_id': f'sec_{section_counter:03d}',
+                                            'heading': current_section,
+                                            'content': ' '.join(current_content).strip(),
+                                            'level': self._get_pdf_heading_level(span),
+                                            'page_start': page_num + 1,
+                                            'page_end': page_num + 1
+                                        })
+                                        section_counter += 1
+                                    
+                                    # Start new section
+                                    current_section = text
+                                    current_content = []
+                                else:
+                                    # Add to current section content
+                                    if current_section:
+                                        current_content.append(text)
+                                    else:
+                                        # Content before first heading
+                                        if not headings or headings[0]['heading'] != 'Introduction':
+                                            headings.insert(0, {
+                                                'section_id': 'sec_000',
+                                                'heading': 'Introduction',
+                                                'content': text,
+                                                'level': 1,
+                                                'page_start': page_num + 1,
+                                                'page_end': page_num + 1
+                                            })
+                                        else:
+                                            headings[0]['content'] += ' ' + text
+            
+            # Save final section
+            if current_section and current_content:
+                headings.append({
+                    'section_id': f'sec_{section_counter:03d}',
+                    'heading': current_section,
+                    'content': ' '.join(current_content).strip(),
+                    'level': 1,
+                    'page_start': len(doc),
+                    'page_end': len(doc)
+                })
+            
+            doc.close()
+            return headings
+            
         except Exception as e:
-            print(f"Error extracting text: {e}")
-            sections = {"Document Analysis": "Unable to extract document content"}
+            print(f"Error extracting PDF headings: {e}")
+            return []
     
-    # Generate schema from sections
-    schema = heading_extractor.generate_section_schema(sections)
-    
-    print(f"[Dynamic Schema] Generated {len(schema)} sections: {list(schema.keys())}")
-    
-    return schema
-
-## File & Input Utilities
+    def _extract_docx_sections(self, file_path: str) -> Dict[str, str]:
         """Extract sections from DOCX file"""
         try:
-            from docx import Document
             doc = Document(file_path)
             
             sections = {}
@@ -125,7 +218,6 @@ def generate_dynamic_report_structure(file_path: str) -> dict:
     def _extract_pdf_sections(self, file_path: str) -> Dict[str, str]:
         """Extract sections from PDF file"""
         try:
-            import fitz  # PyMuPDF
             doc = fitz.open(file_path)
             
             sections = {}
@@ -236,6 +328,92 @@ def generate_dynamic_report_structure(file_path: str) -> dict:
         
         return False
     
+    def _get_docx_heading_level(self, paragraph) -> int:
+        """Get heading level from DOCX paragraph"""
+        style_name = paragraph.style.name
+        if 'Heading' in style_name:
+            try:
+                return int(style_name.split()[-1])
+            except:
+                return 1
+        return 1
+    
+    def _get_pdf_heading_level(self, span: dict) -> int:
+        """Get heading level from PDF span based on font size"""
+        font_size = span.get('size', 12)
+        if font_size >= 18:
+            return 1
+        elif font_size >= 16:
+            return 2
+        elif font_size >= 14:
+            return 3
+        else:
+            return 1
+    
+    def map_headings_to_sections(self, detected_headings: List[Dict], target_sections: List[str]) -> Dict[str, Dict]:
+        """
+        Map detected headings to target report sections using semantic similarity.
+        
+        Args:
+            detected_headings: List of detected heading dictionaries
+            target_sections: List of target section names (e.g., ['executive_summary', 'scope_of_work'])
+            
+        Returns:
+            Dict mapping target sections to best matching detected headings
+        """
+        mapping = {}
+        
+        # Define mapping rules for common sections
+        section_keywords = {
+            'executive_summary': ['summary', 'executive', 'overview', 'introduction', 'abstract'],
+            'scope_of_work': ['scope', 'work', 'methodology', 'approach', 'method', 'process'],
+            'value_proposition': ['value', 'proposition', 'benefit', 'advantage', 'strength'],
+            'why_company_a': ['why', 'company', 'about', 'background', 'profile', 'experience'],
+            'risks': ['risk', 'challenge', 'issue', 'concern', 'mitigation', 'problem'],
+            'recommendations': ['recommendation', 'conclusion', 'next', 'steps', 'action', 'future'],
+            'findings': ['finding', 'result', 'outcome', 'discovery', 'analysis', 'conclusion']
+        }
+        
+        for target_section in target_sections:
+            best_match = None
+            best_score = 0
+            
+            # Get keywords for this target section
+            keywords = section_keywords.get(target_section, [target_section.replace('_', ' ').split()])
+            
+            for heading_data in detected_headings:
+                heading_text = heading_data['heading'].lower()
+                
+                # Calculate similarity score
+                score = 0
+                for keyword in keywords:
+                    if keyword in heading_text:
+                        score += 1
+                
+                # Boost score for exact matches
+                if any(keyword == heading_text for keyword in keywords):
+                    score += 5
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = heading_data
+            
+            if best_match:
+                mapping[target_section] = best_match
+            else:
+                # Fallback: create a summarized section from all content
+                all_content = ' '.join([h['content'] for h in detected_headings])
+                mapping[target_section] = {
+                    'heading': f"Summarized {target_section.replace('_', ' ').title()}",
+                    'content': all_content[:1000] + "..." if len(all_content) > 1000 else all_content,
+                    'level': 1,
+                    'page_start': 1,
+                    'page_end': 1,
+                    'section_id': f'fallback_{target_section}'
+                }
+        
+        return mapping
+    
     def generate_section_schema(self, sections: Dict[str, str]) -> Dict[str, Any]:
         """
         Generate a dynamic schema from extracted sections.
@@ -322,207 +500,3 @@ def generate_dynamic_report_structure(file_path: str) -> dict:
                 "length": "2-3 paragraphs, 150-250 words",
                 "format": "Well-structured paragraphs that clearly convey the main points and important details"
             }
-def save_uploaded_file(file: UploadFile) -> str:
-    """
-    Saves the uploaded file to a temporary file path and returns the path.
-
-    Args:
-        file (UploadFile): The file uploaded via FastAPI endpoint.
-
-    Returns:
-        str: Path to the saved temporary file.
-
-    Raises:
-        ValueError: If the file type is not supported (PDF or DOCX).
-    """
-    _, ext = os.path.splitext(file.filename)
-    if ext.lower() not in [".pdf", ".docx"]:
-        raise ValueError("Unsupported file type")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-        shutil.copyfileobj(file.file, tmp_file)
-        return tmp_file.name
-
-def extract_and_clean_text(file_path: str) -> str:
-    """
-    Extracts raw text from a PDF or DOCX file and cleans it.
-
-    1. Detects file type (PDF or DOCX).
-    2. Extracts text, with OCR fallback for image-only PDFs.
-    3. Cleans and normalizes the extracted text for further processing.
-
-    Args:
-        file_path (str): Path to the input document.
-
-    Returns:
-        str: Cleaned text extracted from the file.
-    """
-    raw_text = extract_text(file_path)
-
-    if not raw_text.strip():
-        # Return placeholder or raise warning if extraction fails
-        return "[No extractable text found in the document.]"
-
-    return clean_extracted_text(raw_text)
-
-def load_report_structure(json_path: str) -> dict:
-    """
-    Loads the JSON-based report structure used for guiding extraction.
-
-    Args:
-        json_path (str): Path to the JSON template file.
-
-    Returns:
-        dict: Dictionary representation of the JSON structure.
-    """
-    with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-## Extraction Phase
-def extract_structured_data_dynamic(extracted_text: str, detected_headings: list, target_sections: list, extractor_agent, user_proxy):
-    """
-    Uses an extractor agent to map detected headings to target sections dynamically.
-    
-    Args:
-        extracted_text (str): Cleaned raw text from the document.
-        detected_headings (list): List of detected headings from document.
-        target_sections (list): List of target section names for report.
-        extractor_agent: AutoGen extractor agent responsible for parsing.
-        user_proxy: Proxy agent to handle chat.
-
-    Returns:
-        dict: Dictionary mapping target sections to best matching content.
-    """
-    if not detected_headings or not target_sections:
-        return {}
-
-    # Create mapping using heading extractor
-    heading_extractor = HeadingExtractor()
-    section_mapping = heading_extractor.map_headings_to_sections(detected_headings, target_sections)
-    
-    # Prepare content for each target section
-    structured_data = {}
-    
-    for target_section in target_sections:
-        if target_section in section_mapping:
-            mapped_heading = section_mapping[target_section]
-            content = mapped_heading['content']
-            
-            # Use extractor agent to structure the content
-            extraction_prompt = f"""
-            You are extracting structured information for the section: "{target_section.replace('_', ' ').title()}"
-            
-            From the detected heading: "{mapped_heading['heading']}"
-            
-            Content:
-            {content}
-            
-            Extract key facts and structure them as:
-            {{
-                "Company Name": "Value if found",
-                "Key Fact 1": "Value",
-                "Key Fact 2": "Value",
-                ...
-            }}
-            
-            Only include facts present in the content. End with TERMINATE.
-            """
-            
-            chat = user_proxy.initiate_chat(
-                extractor_agent,
-                message={"content": extraction_prompt},
-                human_input_mode="NEVER"
-            )
-            
-            # Extract response
-            final_texts = [
-                msg["content"].strip()
-                for msg in chat.chat_history
-                if msg.get("name") == "extractor_agent" and msg["content"].strip() != "TERMINATE"
-            ]
-            
-            if final_texts:
-                try:
-                    from ast import literal_eval
-                    cleaned_output = final_texts[-1].split("TERMINATE")[0].strip()
-                    section_data = literal_eval(cleaned_output)
-                    structured_data[target_section.replace('_', ' ').title()] = section_data
-                except Exception as e:
-                    print(f"Error parsing data for {target_section}: {e}")
-                    structured_data[target_section.replace('_', ' ').title()] = {"content": content}
-    
-    return structured_data
-
-def extract_structured_data(extracted_text: str, sections: dict, extractor_agent, user_proxy, section_filter: list[str] = None):
-    """
-    Legacy function - maintained for backward compatibility.
-    Uses an extractor agent to map extracted text into structured section-wise data.
-    """
-    section_titles = []
-    for key, section in sections.items():
-        if "subsections" in section:
-            for _, sub in section["subsections"].items():
-                if not section_filter or sub["title"] in section_filter:
-                    section_titles.append(sub["title"])
-        else:
-            if not section_filter or section["title"] in section_filter:
-                section_titles.append(section["title"])
-
-    if not section_titles:
-        return {}
-
-    section_list = "\n".join([f"- {title}" for title in section_titles])
-
-    extraction_prompt = f"""
-        You are a skilled **Document Extractor Agent**.
-
-        You are provided with a document and a list of section titles.
-
-        Your task is to extract relevant information from the document and organize it by section title, following these rules:
-
-        1. Always provide a dictionary for **every section title**, even if the document does not have a literal matching heading.
-        2. If the section does not explicitly exist in the document, **infer its content** using the most relevant facts that fulfill its intent.  
-        - Example: "Why Company A" can be inferred from company overview, differentiators, proven impact, or any content that explains why the company is a strong partner.
-        3. Structure the output as JSON-style, like:
-            {{
-                "Section Title 1": {{
-                    "Company Name": "Value",
-                    "Key Fact": "Value",
-                    ...
-                }},
-                ...
-            }}
-        4. Always include `"Company Name"` in every section.
-        5. Only include facts from the document (no outside knowledge).
-        6. End your message with **TERMINATE**.
-
-        Section Titles:
-        {section_list}
-
-        --- START DOCUMENT ---
-        {extracted_text}
-        --- END DOCUMENT ---
-    """
-
-    chat = user_proxy.initiate_chat(
-        extractor_agent,
-        message={"content": extraction_prompt},
-        human_input_mode="NEVER"
-    )
-
-    final_texts = [
-        msg["content"].strip()
-        for msg in chat.chat_history
-        if msg.get("name") == "extractor_agent" and msg["content"].strip() != "TERMINATE"
-    ]
-    final_output = final_texts[-1] if final_texts else "{}"
-    
-    try:
-        from ast import literal_eval
-        cleaned_output = final_output.split("TERMINATE")[0].strip()
-        structured_data = literal_eval(cleaned_output)
-    except Exception as e:
-        structured_data = {}
-        print("Error parsing extracted data:", e)
-
-    return structured_data
